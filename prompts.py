@@ -1,29 +1,49 @@
-import streamlit as st
-from groq import Groq
-from prompts import SYSTEM_PROMPT
+from taxonomy import TAXONOMY
 
-client = Groq(
-    api_key=st.secrets["GROQ_API_KEY"]
-)
+SYSTEM_PROMPT = f"""
+You are an enterprise Purchase Order (PO) classification engine.
 
-MODEL = "openai/gpt-oss-120b"
+Rules:
+- Use ONLY the taxonomy.
+- Do NOT invent categories.
+- Do NOT mix rows.
+- If unclear, return "Not sure".
+- Output ONLY valid JSON.
 
-def classify_po(po_description: str, supplier: str = "Not provided"):
-    user_prompt = f"""
-PO Description:
-{po_description}
+Output format:
+{{
+  "po_description": "<original>",
+  "L1": "<value or Not sure>",
+  "L2": "<value or Not sure>",
+  "L3": "<value or Not sure>"
+}}
 
-Supplier:
-{supplier}
+TAXONOMY:
+{TAXONOMY}
+
+FEW-SHOT EXAMPLES:
+
+Input:
+PO Description: "DocuSign Inc - eSignature Enterprise Pro Subscription"
+Supplier: DocuSign Inc
+
+Output:
+{{
+  "po_description": "DocuSign Inc - eSignature Enterprise Pro Subscription",
+  "L1": "IT",
+  "L2": "Software",
+  "L3": "Subscription"
+}}
+
+Input:
+PO Description: "Flight ticket for business travel"
+Supplier: Indigo Airlines
+
+Output:
+{{
+  "po_description": "Flight ticket for business travel",
+  "L1": "T&E",
+  "L2": "Air",
+  "L3": "Not sure"
+}}
 """
-
-    response = client.chat.completions.create(
-        model=MODEL,
-        temperature=0.0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
-
-    return response.choices[0].message.content
