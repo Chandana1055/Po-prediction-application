@@ -1,163 +1,107 @@
-from __future__ import annotations
-
-import argparse
 import json
-import logging
-import os
-import sys
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Any, Dict, List
+
+import streamlit as st
+
+from classifier import classify_po
+
+st.set_page_config(page_title="PO Category Classifier", layout="wide")
+
+st.title("PO L1-L2-L3 Classifier")
+st.caption("Classify purchase order text into L1/L2/L3 categories.")
+
+EXAMPLE_DESCRIPTION = "Purchase of 50 office chairs with ergonomic support for HQ."
+EXAMPLE_SUPPLIER = "Acme Office Supplies"
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
+if "po_description" not in st.session_state:
+    st.session_state.po_description = ""
+if "supplier" not in st.session_state:
+    st.session_state.supplier = ""
 
 
-APP_NAME = "app"
+@st.cache_data(show_spinner=False)
+def _classify_cached(description: str, supplier_name: str) -> str:
+    return classify_po(description, supplier_name)
 
 
-@dataclass(frozen=True)
-class Config:
-    input_text: Optional[str]
-    input_file: Optional[str]
-    output_file: Optional[str]
-    uppercase: bool
-    json_output: bool
-    log_level: str
+def _add_history(entry: Dict[str, Any]) -> None:
+    st.session_state.history.insert(0, entry)
+    st.session_state.history = st.session_state.history[:3]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog=APP_NAME,
-        description="A reliable CLI template with clear UX and guardrails.",
-        epilog=(
-            "Examples:\n"
-            "  app --text \"hello world\"\n"
-            "  app --file input.txt --output out.txt\n"
-            "  app --text \"hello\" --json\n"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+left, right = st.columns([2, 3], gap="large")
+
+with left:
+    st.subheader("Input")
+    st.write("Tip: include item, quantity, and use-case for best results.")
+    st.session_state.po_description = st.text_area(
+        "PO Description",
+        value=st.session_state.po_description,
+        height=140,
+        help="Example: 'Purchase of 50 office chairs with ergonomic support for HQ.'",
     )
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--text",
-        dest="input_text",
-        help="Inline text to process.",
-    )
-    input_group.add_argument(
-        "--file",
-        dest="input_file",
-        help="Path to a text file to process.",
-    )
-    parser.add_argument(
-        "--output",
-        dest="output_file",
-        help="Write output to a file instead of stdout.",
-    )
-    parser.add_argument(
-        "--uppercase",
-        action="store_true",
-        help="Transform text to uppercase.",
-    )
-    parser.add_argument(
-        "--json",
-        dest="json_output",
-        action="store_true",
-        help="Emit a JSON object with metadata.",
-    )
-    parser.add_argument(
-        "--log-level",
-        default=os.getenv("APP_LOG_LEVEL", "INFO"),
-        help="Logging level (default: INFO).",
-    )
-    return parser
-
-
-def parse_args(argv: Iterable[str]) -> Config:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return Config(
-        input_text=args.input_text,
-        input_file=args.input_file,
-        output_file=args.output_file,
-        uppercase=args.uppercase,
-        json_output=args.json_output,
-        log_level=args.log_level.upper(),
+    st.session_state.supplier = st.text_input(
+        "Supplier (optional)",
+        value=st.session_state.supplier,
+        help="Vendor or supplier name, if known.",
     )
 
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("Use Example"):
+            st.session_state.po_description = EXAMPLE_DESCRIPTION
+            st.session_state.supplier = EXAMPLE_SUPPLIER
+    with cols[1]:
+        if st.button("Clear"):
+            st.session_state.po_description = ""
+            st.session_state.supplier = ""
+            st.session_state.last_result = None
 
-def configure_logging(level: str) -> None:
-    numeric = getattr(logging, level, None)
-    if not isinstance(numeric, int):
-        raise ValueError(f"Invalid log level: {level}")
-    logging.basicConfig(
-        level=numeric,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    can_classify = bool(st.session_state.po_description.strip())
+    if st.button("Classify", disabled=not can_classify):
+        with st.spinner("Classifying..."):
+            try:
+                result = _classify_cached(
+                    st.session_state.po_description, st.session_state.supplier
+                )
+            except Exception as exc:
+                st.error("Classification failed. Please try again.")
+                st.exception(exc)
+            else:
+                st.session_state.last_result = result
+                _add_history(
+                    {
+                        "description": st.session_state.po_description,
+                        "supplier": st.session_state.supplier,
+                        "result": result,
+                    }
+                )
 
-
-def read_input(config: Config) -> str:
-    if config.input_text is not None:
-        return config.input_text
-    if config.input_file is None:
-        raise ValueError("Either --text or --file must be provided.")
-    if not os.path.exists(config.input_file):
-        raise FileNotFoundError(f"Input file not found: {config.input_file}")
-    with open(config.input_file, "r", encoding="utf-8") as handle:
-        return handle.read()
-
-
-def transform(text: str, uppercase: bool) -> str:
-    output = text.strip()
-    if uppercase:
-        output = output.upper()
-    return output
-
-
-def render_output(text: str, json_output: bool) -> str:
-    if not json_output:
-        return text
-    payload = {
-        "app": APP_NAME,
-        "length": len(text),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "output": text,
-    }
-    return json.dumps(payload, ensure_ascii=True)
-
-
-def write_output(result: str, output_file: Optional[str]) -> None:
-    if output_file:
-        with open(output_file, "w", encoding="utf-8") as handle:
-            handle.write(result)
-        logging.info("Wrote output to %s", output_file)
+with right:
+    st.subheader("Result")
+    if st.session_state.last_result:
+        try:
+            parsed: Dict[str, Any] = json.loads(st.session_state.last_result)
+            l1 = parsed.get("l1")
+            l2 = parsed.get("l2")
+            l3 = parsed.get("l3")
+            summary_parts: List[str] = [p for p in [l1, l2, l3] if p]
+            if summary_parts:
+                st.success(" > ".join(summary_parts))
+            st.json(parsed)
+        except Exception:
+            st.error("Invalid model response. Showing raw output.")
+            st.text(st.session_state.last_result)
     else:
-        print(result)
+        st.info("Run a classification to see results here.")
 
-
-def run(argv: Iterable[str]) -> int:
-    try:
-        config = parse_args(argv)
-        configure_logging(config.log_level)
-        logging.info("Starting %s", APP_NAME)
-
-        raw_text = read_input(config)
-        processed = transform(raw_text, config.uppercase)
-        result = render_output(processed, config.json_output)
-        write_output(result, config.output_file)
-
-        logging.info("Completed successfully")
-        return 0
-    except (ValueError, FileNotFoundError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:  # noqa: BLE001
-        logging.exception("Unexpected error")
-        print(f"Unexpected error: {exc}", file=sys.stderr)
-        return 1
-
-
-def main() -> None:
-    raise SystemExit(run(sys.argv[1:]))
-
-
-if __name__ == "__main__":
-    main()
+    if st.session_state.history:
+        st.subheader("Recent History")
+        for entry in st.session_state.history:
+            st.write(f"- {entry['description'][:80]}")
+            if entry["supplier"]:
+                st.caption(f"Supplier: {entry['supplier']}")
