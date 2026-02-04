@@ -8,7 +8,7 @@ client = Groq(
 
 MODEL = "openai/gpt-oss-120b"
 
-def classifier_po(po_description: str, supplier: str = "Not provided"):
+def classify_po(po_description: str, supplier: str = "Not provided"):
     user_prompt = f"""
 PO Description:
 {po_description}
@@ -27,7 +27,3 @@ Supplier:
     )
 
     return response.choices[0].message.content
-
-
-
-
