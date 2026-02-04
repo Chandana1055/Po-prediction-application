@@ -1,6 +1,7 @@
 import streamlit as st
 import json
-from classifier import classify_po
+from classifer import classify_po
+
 
 st.set_page_config(page_title="PO Category Classifier", layout="centered")
 
