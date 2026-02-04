@@ -1,82 +1,72 @@
-import argparse
 import json
-import logging
-import sys
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+import time
+import streamlit as st
+from classifier import classify_po, MODEL
 
-# NOTE: These modules are placeholders for future integration.
-# from classifier import classify_text
-# from taxonomy import TAXONOMY
-# from prompts import build_prompt
+st.set_page_config(page_title="PO L1-L2-L3 Classifier", layout="centered")
 
+st.title("PO L1-L2-L3 Classifier")
+st.caption("Classify purchase order descriptions using the enterprise taxonomy.")
 
-@dataclass
-class AppConfig:
-    log_level: str = "INFO"
-    output_format: str = "json"
+show_raw_output = st.sidebar.checkbox("Show raw model output", value=True)
 
+if "po_description" not in st.session_state:
+    st.session_state["po_description"] = ""
+if "supplier" not in st.session_state:
+    st.session_state["supplier"] = ""
 
-def setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s | %(levelname)s | %(message)s",
+with st.form("classifier_form"):
+    po_description = st.text_area(
+        "PO Description",
+        height=140,
+        placeholder="Example: DocuSign Inc - eSignature Enterprise Pro Subscription",
+        help="Enter the full PO line item description.",
+        key="po_description",
+    )
+    supplier = st.text_input(
+        "Supplier (optional)",
+        placeholder="Example: DocuSign Inc",
+        help="Leave blank if the supplier is unknown.",
+        key="supplier",
+    )
+    submit = st.form_submit_button(
+        "Classify",
+        disabled=not po_description.strip(),
     )
 
+col_left, col_right = st.columns([1, 3])
+with col_left:
+    clear = st.button("Clear", type="secondary")
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Text classification CLI.")
-    parser.add_argument("text", help="Text to classify.")
-    parser.add_argument(
-        "--format",
-        choices=["json", "text"],
-        default="json",
-        help="Output format.",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        help="Logging level (e.g., INFO, DEBUG).",
-    )
-    return parser.parse_args(argv)
+if clear:
+    st.session_state["po_description"] = ""
+    st.session_state["supplier"] = ""
+    st.rerun()
 
+if submit:
+    if not po_description.strip():
+        st.warning("Please enter a PO description.")
+    else:
+        start = time.perf_counter()
+        try:
+            with st.spinner("Classifying..."):
+                result = classify_po(po_description, supplier)
+            elapsed = time.perf_counter() - start
+        except Exception as exc:
+            st.error("Classification failed. Please check your API key or try again.")
+            st.caption(f"Error details: {exc}")
+        else:
+            st.subheader("Classification Result")
+            st.caption(f"Model: {MODEL} · Latency: {elapsed:.2f}s")
 
-def classify(text: str) -> Dict[str, Any]:
-    """
-    Placeholder classification logic.
-    Replace with real classifier integration.
-    """
-    # TODO: Replace with actual classification:
-    # result = classify_text(text, taxonomy=TAXONOMY, prompt=build_prompt(text))
-    return {
-        "label": "unknown",
-        "confidence": 0.0,
-        "input": text,
-    }
-
-
-def format_output(result: Dict[str, Any], fmt: str) -> str:
-    if fmt == "text":
-        return f"label={result['label']} confidence={result['confidence']}"
-    return json.dumps(result, indent=2)
-
-
-def main(argv: Optional[list[str]] = None) -> int:
-    args = parse_args(argv)
-    config = AppConfig(log_level=args.log_level, output_format=args.format)
-
-    setup_logging(config.log_level)
-    logging.debug("Starting classification")
-
-    try:
-        result = classify(args.text)
-        output = format_output(result, config.output_format)
-        print(output)
-        return 0
-    except Exception as exc:
-        logging.exception("Classification failed: %s", exc)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+            try:
+                parsed = json.loads(result)
+            except Exception:
+                st.warning("Model returned invalid JSON.")
+                with st.expander("Raw response", expanded=True):
+                    st.text(result)
+            else:
+                st.json(parsed)
+                if show_raw_output:
+                    with st.expander("Raw response"):
+                        st.text(result)
